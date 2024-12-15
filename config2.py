@@ -5,7 +5,7 @@ async def create_table():
     conn = await asyncpg.connect(
         database="postgres",
         user="postgres",
-        password="Galifloh1488",
+        password="G",
         host="localhost",
         port=5432
     )
@@ -26,7 +26,7 @@ async def alter_table():
     conn = await asyncpg.connect(
         database="postgres",
         user="postgres",
-        password="Galifloh1488",
+        password="G",
         host="localhost",
         port=5432
     )
@@ -51,7 +51,7 @@ async def create_moderation_table():
     conn = await asyncpg.connect(
         database="postgres",
         user="postgres",
-        password="Galifloh1488",
+        password="G",
         host="localhost",
         port=5432
     )
@@ -77,7 +77,7 @@ async def alter_moderation_table():
     conn = await asyncpg.connect(
         database="postgres",
         user="postgres",
-        password="Galifloh1488",
+        password="G",
         host="localhost",
         port=5432
     )
