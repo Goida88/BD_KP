@@ -5,7 +5,7 @@ from aiogram import Bot
 from config import TOKEN
 
 import app.keyboards as kb
-from app.database import save_review, get_review, save_review_rating, get_top_reviews, get_average_rating, approve_review
+from app.database import save_review, get_review, save_review_rating, get_top_reviews, get_average_rating, approve_review, save_user, get_user_profile
 from app.keyboards import generate_rating_keyboard, inline_average_rating_button
 from app.database import save_review_for_moderation, get_pending_reviews, update_review_status
 
@@ -18,14 +18,17 @@ db_pool = None
 
 # Создаём объект бота для отправки уведомлений
 bot = Bot(token=TOKEN)  # Замените YOUR_BOT_TOKEN на ваш токен
-
 def set_db_pool(pool):
     global db_pool
     db_pool = pool
 
 @router.message(CommandStart())
 async def cmd_start(message: Message):
-    await message.answer('Привет!', reply_markup=kb.main)
+    user_id = message.from_user.id
+
+    # Сохраняем состояние для выбора логина
+    user_data[user_id] = {'action': 'ask_username'}
+    await message.answer("Привет! Давай придумаем тебе логин. Введите желаемый логин:", reply_markup=kb.main)
 
 MODERATORS = {426327797}  # Замените на реальные user_id модераторов
 
@@ -80,6 +83,28 @@ async def start_review(message: Message):
     user_data[user_id] = {'action': 'add_review', 'city': None, 'street': None, 'house': None, 'review': None}
     await message.answer("Введите город в формате:\nГород Москва")
 
+
+@router.message(F.text == 'Мой профиль 👤')
+async def show_user_profile(message: Message):
+    user_id = message.from_user.id
+
+    # Получаем информацию о пользователе из базы данных
+    user_profile = await get_user_profile(db_pool, user_id)
+
+    if user_profile:
+        username = user_profile["username"]
+        reviews_count = user_profile["reviews_count"]
+        await message.answer(
+            f"👤 <b>Ваш профиль:</b>\n\n"
+            f"🆔 <b>ID:</b> {user_id}\n"
+            f"👤 <b>Логин:</b> {username}\n"
+            f"📝 <b>Количество отзывов:</b> {reviews_count}",
+            parse_mode="HTML"
+        )
+    else:
+        await message.answer(
+            "❌ Ваш профиль не найден. Возможно, вы не зарегистрированы. Введите /start, чтобы начать."
+        )
 @router.message(F.text == 'Найти отзывы 🌟')
 async def start_find_reviews(message: Message):
     user_id = message.from_user.id
@@ -101,6 +126,16 @@ async def handle_user_input(message: Message):
         return
 
     action = user_data[user_id].get('action')
+    if action == 'ask_username':
+        username = message.text.strip()
+
+        # Проверяем и сохраняем логин
+        success = await save_user(db_pool, user_id, username)
+        if success:
+            await message.answer(f"Отлично, {username}! Логин зарегистрирован. Давай начнём!", reply_markup=kb.main)
+            del user_data[user_id]  # Сбрасываем состояние
+        else:
+            await message.answer("Этот логин уже занят. Попробуйте ввести другой логин:", reply_markup=kb.main)
 
     if action == 'add_review':
         if user_data[user_id]['city'] is None:
@@ -136,90 +171,86 @@ async def handle_user_input(message: Message):
             )
             if reviews:
                 reviews_text = "\n\n".join([
-                    f"Отзыв: {review['review']}\nРейтинг: {review['rating']} ⭐" if review['rating'] is not None
-                    else f"Отзыв: {review['review']}\nРейтинг: не указан"
+                    f"👤 <b>{review['username']}</b>\n"
+                    f"📝 Отзыв: {review['review']}\n"
+                    f"⭐️ Рейтинг: {review['rating']}" if review['rating'] is not None
+                    else f"👤 <b>{review['username']}</b>\n📝 Отзыв: {review['review']}\n⭐️ Рейтинг: не указан"
                     for review in reviews
                 ])
                 await message.answer(
-                    f"Вот что мы нашли для адреса:\n\n"
+                    f"Отзывы для адреса:\n\n"
                     f"<b>Город:</b> {user_data[user_id]['city']}\n"
                     f"<b>Улица:</b> {user_data[user_id]['street']}\n"
                     f"<b>Дом:</b> {user_data[user_id]['house']}\n\n{reviews_text}",
                     parse_mode="HTML"
                 )
             else:
-                await message.answer(
-                    f"К сожалению, отзывов для указанного адреса пока нет.",
-                    parse_mode="HTML"
-                )
+                await message.answer("К сожалению, отзывов для указанного адреса пока нет.")
             del user_data[user_id]
-
     elif action == 'top_best':
         if user_data[user_id]['city'] is None:
             user_data[user_id]['city'] = message.text.strip()
             top_reviews = await get_top_reviews(db_pool, user_data[user_id]['city'])
             if top_reviews:
                 reviews_text = "\n\n".join([
-                    f"<b>Адрес:</b> {review['city']}, {review['street']}, {review['house']}\n"
-                    f"<b>Рейтинг:</b> {review['rating']} ⭐\n"
-                    f"<b>Отзыв:</b> {review['review']}"
+                    f"📍 <b>{review['city']}, {review['street']}, {review['house']}</b>\n"
+                    f"👤 <b>{review['username']}</b>\n"
+                    f"⭐️ Рейтинг: {review['rating']}\n"
+                    f"📝 Отзыв: {review['review']}"
                     for review in top_reviews
                 ])
+                # Добавляем кнопку для среднего рейтинга
                 await message.answer(
-                    f"Топ-10 лучших мест в городе {user_data[user_id]['city']}:\n\n{reviews_text}",
+                    f"🏆 Топ-10 лучших мест в городе {user_data[user_id]['city']}:\n\n{reviews_text}",
                     parse_mode="HTML",
-                    reply_markup=kb.inline_average_rating_button(user_data[user_id]['city'])
+                    reply_markup=kb.inline_average_rating_button(user_data[user_id]['city'])  # Добавляем кнопку
                 )
             else:
-                await message.answer(
-                    f"К сожалению, в городе {user_data[user_id]['city']} пока нет отзывов.",
-                    parse_mode="HTML"
-                )
+                await message.answer(f"В городе {user_data[user_id]['city']} пока нет отзывов.")
             del user_data[user_id]
 
-@router.callback_query(lambda c: c.data and c.data.startswith("rating_"))
-async def handle_rating(callback_query: CallbackQuery):
-    user_id = callback_query.from_user.id
-    rating = float(callback_query.data.split("_")[1])
+    @router.callback_query(lambda c: c.data and c.data.startswith("rating_"))
+    async def handle_rating(callback_query: CallbackQuery):
+        user_id = callback_query.from_user.id
+        rating = float(callback_query.data.split("_")[1])
 
-    if user_id not in user_data or user_data[user_id].get('action') != 'add_review':
-        await callback_query.answer("Что-то пошло не так. Попробуйте снова.")
-        return
+        if user_id not in user_data or user_data[user_id].get('action') != 'add_review':
+            await callback_query.answer("Что-то пошло не так. Попробуйте снова.")
+            return
 
-    # Сохраняем отзыв с рейтингом в таблицу модерации
-    await save_review_for_moderation(
-        db_pool,
-        user_id=user_id,
-        city=user_data[user_id]['city'],
-        street=user_data[user_id]['street'],
-        house=user_data[user_id]['house'],
-        review=user_data[user_id]['review'],
-        rating=rating
-    )
-    await callback_query.answer("Спасибо за ваш отзыв! Он отправлен на модерацию.")
-    await callback_query.message.edit_text(
-        "Ваш отзыв и оценка отправлены на модерацию. Спасибо!"
-    )
-    del user_data[user_id]
-
-
-@router.callback_query(lambda c: c.data and c.data.startswith("average_rating_"))
-async def handle_average_rating(callback_query: CallbackQuery):
-    city = callback_query.data.split("_")[2]
-    average_rating = await get_average_rating(db_pool, city)
-
-    # Закрываем всплывающее уведомление
-    await callback_query.answer()
-
-    if average_rating is not None:
-        # Форматирование для удаления лишних нулей
-        formatted_rating = f"{average_rating:.2f}".rstrip('0').rstrip('.')
-        await callback_query.message.answer(
-            f"Средний рейтинг в городе {city}: {formatted_rating} ⭐",
-            parse_mode="HTML"
+        # Сохраняем отзыв с рейтингом в таблицу модерации
+        await save_review_for_moderation(
+            db_pool,
+            user_id=user_id,
+            city=user_data[user_id]['city'],
+            street=user_data[user_id]['street'],
+            house=user_data[user_id]['house'],
+            review=user_data[user_id]['review'],
+            rating=rating
         )
-    else:
-        await callback_query.message.answer(
-            f"К сожалению, в городе {city} пока нет отзывов с рейтингами.",
-            parse_mode="HTML"
+        await callback_query.answer("Спасибо за ваш отзыв! Он отправлен на модерацию.")
+        await callback_query.message.edit_text(
+            "Ваш отзыв и оценка отправлены на модерацию. Спасибо!"
         )
+        del user_data[user_id]
+
+    @router.callback_query(lambda c: c.data and c.data.startswith("average_rating_"))
+    async def handle_average_rating(callback_query: CallbackQuery):
+        city = callback_query.data.split("_")[2]
+        average_rating = await get_average_rating(db_pool, city)
+
+        # Закрываем всплывающее уведомление
+        await callback_query.answer()
+
+        if average_rating is not None:
+            # Форматирование для удаления лишних нулей
+            formatted_rating = f"{average_rating:.2f}".rstrip('0').rstrip('.')
+            await callback_query.message.answer(
+                f"Средний рейтинг в городе {city}: {formatted_rating} ⭐️",
+                parse_mode="HTML"
+            )
+        else:
+            await callback_query.message.answer(
+                f"К сожалению, в городе {city} пока нет отзывов с рейтингами.",
+                parse_mode="HTML"
+            )
