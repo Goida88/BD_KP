@@ -14,13 +14,13 @@ def generate_rating_keyboard():
     inline_keyboard = []
     for i in range(11):  # Шаг 0.5 (от 0 до 5)
         rating = i * 0.5
-        inline_keyboard.append([InlineKeyboardButton(text=f"{rating} ⭐", callback_data=f"rating_{rating}")])
+        inline_keyboard.append([InlineKeyboardButton(text=f"{rating} ⭐️", callback_data=f"rating_{rating}")])
     return InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
 
 
 def inline_average_rating_button(city: str):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Средний рейтинг ⭐", callback_data=f"average_rating_{city}")]
+        [InlineKeyboardButton(text="Средний рейтинг ⭐️", callback_data=f"average_rating_{city}")]
     ])
 
 
